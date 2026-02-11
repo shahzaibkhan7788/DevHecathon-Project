@@ -67,216 +67,214 @@ def text_to_speech(text):
 
 # --- MAIN APP ---
 
-if auth.login():
-    st.title("🧠 Adaptive Reasoning Agent")
-    user = auth.get_current_user()
+# Auto-set default user (no login required)
+if "user" not in st.session_state:
+    st.session_state.user = "default_user"
 
-    # Sidebar
-    with st.sidebar:
-        st.write(f"Logged in as: **{user}**")
-        if st.button("Logout"):
-            auth.logout()
-        
-        st.divider()
-        st.header("Status & Context")
-        
-        # --- Network Sensor ---
-        if st.button("📡 Check Network Latency"):
-            latency = measure_latency()
-            mode = get_network_mode(latency)
-            st.session_state.network_mode = mode
-            st.session_state.latency = latency
-            start_msg = f"Latency: {latency:.0f}ms -> **{mode} MODE**"
-            if mode == "DEEP":
-                st.success(start_msg)
-            elif mode == "STANDARD":
-                st.warning(start_msg)
-            else:
-                st.error(start_msg)
-        
-        st.caption(f"Current Mode: **{st.session_state.get('network_mode', 'UNKNOWN')}**")
-        st.divider()
+st.title("🧠 Adaptive Reasoning Agent")
+user = st.session_state.user
 
-        # --- History List ---
-        st.subheader("Your Chats (Repositories)")
-        collections = list_collections()
-        
-        if st.button("+ New Chat / Add Repo", use_container_width=True):
-            st.session_state.current_collection = None
-            st.session_state.messages = []
-            st.rerun()
-
-        if collections:
-            index = 0
-            if st.session_state.get("current_collection") in collections:
-                index = collections.index(st.session_state["current_collection"])
-            
-            selected_collection = st.radio(
-                "Select a Repository Context:",
-                collections,
-                index=index,
-                key="repo_list",
-                label_visibility="collapsed"
-            )
-            
-            if selected_collection and selected_collection != st.session_state.get("last_loaded_collection"):
-                st.session_state.current_collection = selected_collection
-                st.session_state.messages = load_chat_history(user, selected_collection)
-                st.session_state.last_loaded_collection = selected_collection
-                st.rerun()
+# Sidebar
+with st.sidebar:
+    st.header("Status & Context")
+    
+    # --- Network Sensor ---
+    if st.button("📡 Check Network Latency"):
+        latency = measure_latency()
+        mode = get_network_mode(latency)
+        st.session_state.network_mode = mode
+        st.session_state.latency = latency
+        start_msg = f"Latency: {latency:.0f}ms -> **{mode} MODE**"
+        if mode == "DEEP":
+            st.success(start_msg)
+        elif mode == "STANDARD":
+            st.warning(start_msg)
         else:
-            st.info("No repository chats yet.")
+            st.error(start_msg)
+    
+    st.caption(f"Current Mode: **{st.session_state.get('network_mode', 'UNKNOWN')}**")
+    st.divider()
 
-        st.divider()
-
-        # --- Ingest New Repo ---
-        with st.expander("Add New Repository", expanded=(st.session_state.get("current_collection") is None)):
-            new_repo_url = st.text_input("GitHub Repo URL", placeholder="https://github.com/owner/repo")
-            mistral_api_key = st.text_input("Mistral API Key", type="password", value=os.getenv("MISTRAL_API_KEY", ""))
-            
-            if st.button("Ingest New Repo"):
-                if not new_repo_url:
-                    st.error("Enter a URL")
-                else:
-                    with st.spinner("Processing & Vectorizing..."):
-                        try:
-                            result = ingest_repo(new_repo_url)
-                            if result.get("status") == "success":
-                                st.success(result["message"])
-                                st.session_state.current_collection = result["collection_name"]
-                                st.session_state.messages = [] 
-                                save_chat_history(user, result["collection_name"], [])
-                                st.rerun()
-                            else:
-                                st.error(result.get("message"))
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-
-        st.divider()
-        
-         # --- Native RAG ---
-        st.subheader("Document Context (Native)")
-        uploaded_files = st.file_uploader("Upload PDF/Text", accept_multiple_files=True)
-        if uploaded_files:
-            if st.button("Process Documents"):
-                with st.spinner("Chunking..."):
-                    all_texts = []
-                    for file in uploaded_files:
-                        try:
-                            text = ""
-                            if file.name.endswith(".pdf"):
-                                with pdfplumber.open(file) as pdf:
-                                    for page in pdf.pages:
-                                        text += page.extract_text() or ""
-                            else:
-                                text = file.read().decode("utf-8")
-                            
-                            chunks = manual_chunk_text(text)
-                            all_texts.extend(chunks)
-                        except Exception as e:
-                            st.error(f"Error {file.name}: {e}")
-                    
-                    if all_texts:
-                        native_db.add_texts(all_texts)
-                        st.success(f"Added {len(all_texts)} chunks.")
-
-        if "current_collection" in st.session_state and st.session_state.current_collection:
-            st.info(f"Active Context: {st.session_state.current_collection}")
-            # Renamed Sync Button
-            if st.button("🔄 Refresh Context"):
-                 st.toast(f"Checking for updates in {st.session_state.current_collection}...")
-                 st.success("Context Refreshed (Simulated Git Pull)")
-
-    # --- MAIN CHAT AREA ---
-    if "messages" not in st.session_state:
+    # --- History List ---
+    st.subheader("Your Chats (Repositories)")
+    collections = list_collections()
+    
+    if st.button("+ New Chat / Add Repo", use_container_width=True):
+        st.session_state.current_collection = None
         st.session_state.messages = []
+        st.rerun()
 
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if "latency" in message:
-                 st.caption(f"⏱️ {message['latency']:.0f}ms | {message['mode']}")
-            if "audio" in message:
-                st.audio(message["audio"])
-
-    # ChatGPT-like Input Area (Text + Voice integrated)
-    voice_prompt = None
-    
-    # Create a container for chat input and voice button
-    col1, col2 = st.columns([0.92, 0.08])
-    
-    with col1:
-        prompt = st.chat_input("Ask a question...")
-    
-    with col2:
-        # Voice popover button (like ChatGPT's microphone icon)
-        with st.popover("🎙️"):
-            st.write("**Voice Input**")
-            audio_input = st.audio_input("Record your message", label_visibility="collapsed")
-            if audio_input:
-                with st.spinner("Transcribing..."):
-                    audio_bytes = audio_input.read()
-                    voice_prompt = transcribe_audio(audio_bytes)
-                    if voice_prompt:
-                        st.success(f"Transcribed: {voice_prompt[:50]}...")
-                        st.session_state.voice_prompt = voice_prompt
-    
-    # Get voice prompt from session state if it was just set
-    if "voice_prompt" in st.session_state and st.session_state.voice_prompt:
-        voice_prompt = st.session_state.voice_prompt
-        st.session_state.voice_prompt = None  # Clear it
-    
-    # Combined Prompt
-    final_prompt = prompt or voice_prompt
-
-    if final_prompt:
-        st.session_state.messages.append({"role": "user", "content": final_prompt})
+    if collections:
+        index = 0
+        if st.session_state.get("current_collection") in collections:
+            index = collections.index(st.session_state["current_collection"])
         
-        if "current_collection" in st.session_state and st.session_state.current_collection:
-            save_chat_history(user, st.session_state.current_collection, st.session_state.messages)
-            
-        with st.chat_message("user"):
-            st.markdown(final_prompt)
+        selected_collection = st.radio(
+            "Select a Repository Context:",
+            collections,
+            index=index,
+            key="repo_list",
+            label_visibility="collapsed"
+        )
+        
+        if selected_collection and selected_collection != st.session_state.get("last_loaded_collection"):
+            st.session_state.current_collection = selected_collection
+            st.session_state.messages = load_chat_history(user, selected_collection)
+            st.session_state.last_loaded_collection = selected_collection
+            st.rerun()
+    else:
+        st.info("No repository chats yet.")
 
-        with st.chat_message("assistant"):
-            if not os.getenv("MISTRAL_API_KEY"):
-                 st.error("API Key Missing")
+    st.divider()
+
+    # --- Ingest New Repo ---
+    with st.expander("Add New Repository", expanded=(st.session_state.get("current_collection") is None)):
+        new_repo_url = st.text_input("GitHub Repo URL", placeholder="https://github.com/owner/repo")
+        mistral_api_key = st.text_input("Mistral API Key", type="password", value=os.getenv("MISTRAL_API_KEY", ""))
+        
+        if st.button("Ingest New Repo"):
+            if not new_repo_url:
+                st.error("Enter a URL")
             else:
-                with st.spinner("Thinking..."):
+                with st.spinner("Processing & Vectorizing..."):
                     try:
-                        repo_context = st.session_state.get("current_collection", "None")
-                        
-                        # Streaming response
-                        response_stream_gen, mode, latency = agent.run(final_prompt, context=f"Context: {repo_context}", stream=True)
-                        
-                        # Use streamlit's write_stream
-                        response_text = st.write_stream(response_stream_gen)
-                        
-                        st.caption(f"⏱️ {latency:.0f}ms | {mode}")
-                        
-                        # Generate Audio ONLY if toggle is on
-                        enable_voice = st.session_state.get("enable_voice_response", False)
-                        
-                        audio_file = None
-                        if enable_voice:
-                             with st.spinner("Speaking..."):
-                                audio_file = text_to_speech(response_text)
-                                if audio_file:
-                                    st.audio(audio_file, autoplay=True)
-
-                        msg_data = {
-                            "role": "assistant", 
-                            "content": response_text,
-                            "mode": mode,
-                            "latency": latency
-                        }
-                        if audio_file:
-                            msg_data["audio"] = audio_file
-                            
-                        st.session_state.messages.append(msg_data)
-                        
-                        if "current_collection" in st.session_state and st.session_state.current_collection:
-                            save_chat_history(user, st.session_state.current_collection, st.session_state.messages)
-
+                        result = ingest_repo(new_repo_url)
+                        if result.get("status") == "success":
+                            st.success(result["message"])
+                            st.session_state.current_collection = result["collection_name"]
+                            st.session_state.messages = [] 
+                            save_chat_history(user, result["collection_name"], [])
+                            st.rerun()
+                        else:
+                            st.error(result.get("message"))
                     except Exception as e:
                         st.error(f"Error: {e}")
+
+    st.divider()
+    
+     # --- Native RAG ---
+    st.subheader("Document Context (Native)")
+    uploaded_files = st.file_uploader("Upload PDF/Text", accept_multiple_files=True)
+    if uploaded_files:
+        if st.button("Process Documents"):
+            with st.spinner("Chunking..."):
+                all_texts = []
+                for file in uploaded_files:
+                    try:
+                        text = ""
+                        if file.name.endswith(".pdf"):
+                            with pdfplumber.open(file) as pdf:
+                                for page in pdf.pages:
+                                    text += page.extract_text() or ""
+                        else:
+                            text = file.read().decode("utf-8")
+                        
+                        chunks = manual_chunk_text(text)
+                        all_texts.extend(chunks)
+                    except Exception as e:
+                        st.error(f"Error {file.name}: {e}")
+                
+                if all_texts:
+                    native_db.add_texts(all_texts)
+                    st.success(f"Added {len(all_texts)} chunks.")
+
+    if "current_collection" in st.session_state and st.session_state.current_collection:
+        st.info(f"Active Context: {st.session_state.current_collection}")
+        # Renamed Sync Button
+        if st.button("🔄 Refresh Context"):
+             st.toast(f"Checking for updates in {st.session_state.current_collection}...")
+             st.success("Context Refreshed (Simulated Git Pull)")
+
+# --- MAIN CHAT AREA ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+
+for message in st.session_state.messages:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+        if "latency" in message:
+             st.caption(f"⏱️ {message['latency']:.0f}ms | {message['mode']}")
+        if "audio" in message:
+            st.audio(message["audio"])
+
+# ChatGPT-like Input Area (Text + Voice integrated)
+voice_prompt = None
+
+# Create a container for chat input and voice button
+col1, col2 = st.columns([0.92, 0.08])
+
+with col1:
+    prompt = st.chat_input("Ask a question...")
+
+with col2:
+    # Voice popover button (like ChatGPT's microphone icon)
+    with st.popover("🎙️"):
+        st.write("**Voice Input**")
+        audio_input = st.audio_input("Record your message", label_visibility="collapsed")
+        if audio_input:
+            with st.spinner("Transcribing..."):
+                audio_bytes = audio_input.read()
+                voice_prompt = transcribe_audio(audio_bytes)
+                if voice_prompt:
+                    st.success(f"Transcribed: {voice_prompt[:50]}...")
+                    st.session_state.voice_prompt = voice_prompt
+    
+# Get voice prompt from session state if it was just set
+if "voice_prompt" in st.session_state and st.session_state.voice_prompt:
+    voice_prompt = st.session_state.voice_prompt
+    st.session_state.voice_prompt = None  # Clear it
+
+# Combined Prompt
+final_prompt = prompt or voice_prompt
+
+if final_prompt:
+    st.session_state.messages.append({"role": "user", "content": final_prompt})
+        
+    if "current_collection" in st.session_state and st.session_state.current_collection:
+        save_chat_history(user, st.session_state.current_collection, st.session_state.messages)
+        
+    with st.chat_message("user"):
+        st.markdown(final_prompt)
+
+    with st.chat_message("assistant"):
+        if not os.getenv("MISTRAL_API_KEY"):
+             st.error("API Key Missing")
+        else:
+            with st.spinner("Thinking..."):
+                try:
+                    repo_context = st.session_state.get("current_collection", "None")
+                    
+                    # Streaming response
+                    response_stream_gen, mode, latency = agent.run(final_prompt, context=f"Context: {repo_context}", stream=True)
+                    
+                    # Use streamlit's write_stream
+                    response_text = st.write_stream(response_stream_gen)
+                    
+                    st.caption(f"⏱️ {latency:.0f}ms | {mode}")
+                    
+                    # Generate Audio ONLY if toggle is on
+                    enable_voice = st.session_state.get("enable_voice_response", False)
+                    
+                    audio_file = None
+                    if enable_voice:
+                         with st.spinner("Speaking..."):
+                            audio_file = text_to_speech(response_text)
+                            if audio_file:
+                                st.audio(audio_file, autoplay=True)
+
+                    msg_data = {
+                        "role": "assistant", 
+                        "content": response_text,
+                        "mode": mode,
+                        "latency": latency
+                    }
+                    if audio_file:
+                        msg_data["audio"] = audio_file
+                        
+                    st.session_state.messages.append(msg_data)
+                    
+                    if "current_collection" in st.session_state and st.session_state.current_collection:
+                        save_chat_history(user, st.session_state.current_collection, st.session_state.messages)
+
+                except Exception as e:
+                    st.error(f"Error: {e}")

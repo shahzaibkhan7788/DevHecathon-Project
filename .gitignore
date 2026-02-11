@@ -50,8 +50,8 @@ qdrant_db/
 .DS_Store
 Thumbs.db
 
-# Chat histories (optional - uncomment if you don't want to commit chats)
-# chats/
+# Chat histories (keeping private - each user will have their own)
+chats/
 
 # Cloned repositories
 repos/
